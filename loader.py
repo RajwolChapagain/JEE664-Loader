@@ -1,69 +1,56 @@
 import serial
 import argparse
+from s_record_to_hex_converter import get_hex_from_srecord
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-f', '--file', help='Path to the object file to be loaded')
+def get_chunked_data(series_of_data, chunk_size: int) -> list:
+    return [series_of_data[i:i+chunk_size] for i in range(0, len(series_of_data), chunk_size)]
 
-args = parser.parse_args()
+def load_data_to_programmer(contiguous_data: str) -> None:
+    port = 'COM1' # Port where the RS-232 interface of the JEE 664 is connected to this computer
+    ser = serial.Serial(
+        port=port,
+        baudrate=9600,
+        bytesize=8,
+        parity='O',
+        stopbits=2.0,
+        timeout=1
+    )
 
-ser = serial.Serial(
-    port='COM1',
-    baudrate=9600,
-    bytesize=8,
-    parity='O',
-    stopbits=2.0,
-    timeout=1
-)
+    if not ser.dsr:
+        print('Error: Programmer not set to RS 232 Interface')
+        ser.close()
+        return
 
-if not ser.dsr:
-    print('Error: Programmer not set to RS 232 Interface')
-    ser.close()
-    exit()
+    # Reset programmer to make it anticipate a control word next
+    ser.dtr = False
+    ser.dtr = True
 
-# Reset programmer to make it anticipate a control word next
-ser.dtr = False
-ser.dtr = True
+    # The JEE 664 accepts data 256 bytes at a time
+    chunked_data: list[list[str]] = get_chunked_data(get_chunked_data(contiguous_data, 2), 256)
 
-with open(args.file, 'r') as f:
-    line = f.readline()
+    # This clears the address to start writing at the begininning of the lower 32K of the JEE 664 EPROM Programmer
+    # For more information, check the control word table in the JEE 665 manual: 
+    # https://www.manuallib.com/download/2023-10-19/Jameco%20JE665%20RS-232C%20Interface%20User%27s%20Manual.pdf
+   # ser.write(bytes.fromhex('A0'))
+    print('A0')
 
-    # Programmer expects 256 bytes of data after control word
-    # After sending the 256 bytes of data, we need to send another control word for the next 256 bytes
-    byte_count = 256
+    for i, chunk in enumerate(chunked_data):
+        ser.write(bytes.fromhex('AE')) # $AE is the control word for writing to the lower 32K address of the JEE 664 without clearing the current address
+        print('AE')
+        print(f'Loading chunk {i+1}/{len(chunked_data)}')
+        for byte in chunk:
+            ser.write(bytes.fromhex(byte))
 
-    # Set the address to F800 on the programmer (Specific to assembler and EPROM chip)
-    next_address = 0xF800
-    i = 0
-    while line:
-        if line.startswith('s1'):
-            address = line[4:8]
-            while (next_address != int(address, 16)):
-                if byte_count == 256:
-                    ser.write(b'\xAE')
-                    byte_count = 0
-                ser.write(bytes.fromhex('FF'))
-                next_address += 1
-                byte_count += 1
-                
-            data = line[8:-3]
-            data_list = []
-            cur = 0
-            while cur < len(data):
-                data_list.append(data[cur: cur+2])
-                cur += 2
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-f', 
+        '--input-file', 
+        help='Path to the input S-record file to be loaded',
+        required=True
+    )
 
-            for d in data_list:
-                if byte_count == 256:
-                    ser.write(b'\xAE')
-                    byte_count = 0
-                ser.write(bytes.fromhex(d))
-                byte_count += 1
+    args = parser.parse_args()
 
-            num_bytes_in_line = int(line[2:4], 16) - 3 # Subtract by 3 to account for 2 address bytes and 1 checksum byte at the end
-            next_address = int(address, 16) + num_bytes_in_line
-            print(hex(next_address))
-            i += 1
-            
-        line = f.readline()
-
-ser.close()
+    with open(args.input_file, 'r') as f:
+        load_data_to_programmer(get_hex_from_srecord(f.read()))
