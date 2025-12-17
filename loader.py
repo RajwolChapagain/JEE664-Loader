@@ -5,8 +5,7 @@ from s_record_to_hex_converter import get_hex_from_srecord
 def get_chunked_data(series_of_data, chunk_size: int) -> list:
     return [series_of_data[i:i+chunk_size] for i in range(0, len(series_of_data), chunk_size)]
 
-def load_data_to_programmer(contiguous_data: str) -> None:
-    port = 'COM1' # Port where the RS-232 interface of the JEE 664 is connected to this computer
+def load_data_to_programmer(contiguous_data: str, port: str) -> None:
     ser = serial.Serial(
         port=port,
         baudrate=9600,
@@ -31,18 +30,17 @@ def load_data_to_programmer(contiguous_data: str) -> None:
     # This clears the address to start writing at the begininning of the lower 32K of the JEE 664 EPROM Programmer
     # For more information, check the control word table in the JEE 665 manual: 
     # https://www.manuallib.com/download/2023-10-19/Jameco%20JE665%20RS-232C%20Interface%20User%27s%20Manual.pdf
-   # ser.write(bytes.fromhex('A0'))
-    print('A0')
+    ser.write(bytes.fromhex('A0'))
 
     for i, chunk in enumerate(chunked_data):
         ser.write(bytes.fromhex('AE')) # $AE is the control word for writing to the lower 32K address of the JEE 664 without clearing the current address
-        print('AE')
         print(f'Loading chunk {i+1}/{len(chunked_data)}')
         for byte in chunk:
             ser.write(bytes.fromhex(byte))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    
     parser.add_argument(
         '-f', 
         '--input-file', 
@@ -50,7 +48,14 @@ if __name__ == '__main__':
         required=True
     )
 
+    parser.add_argument(
+        '-p', 
+        '--port', 
+        help='Serial port where the RS-232 interface is connected to this computer. Examples: /dev/ttyUSB0 (Linux), COM1 (Windows), etc. Defaults to COM1.',
+        default='COM1',
+    )
+
     args = parser.parse_args()
 
     with open(args.input_file, 'r') as f:
-        load_data_to_programmer(get_hex_from_srecord(f.read()))
+        load_data_to_programmer(get_hex_from_srecord(f.read()), args.port)
